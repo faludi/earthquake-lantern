@@ -7,7 +7,7 @@ from Url_encode import url_encode
 import machine
 import ntptime
 
-__version__ = "0.1.11"
+__version__ = "0.1.12"
 
 class Client:
     def __init__(self, ssid, password, debug_mode=False, watchdog=None):
@@ -55,7 +55,8 @@ class Client:
         for _ in range(max_retries):
             try:
                 print('Syncing time via NTP...')
-                if self.watchdog: self.watchdog.feed()  # Feed the watchdog if configuredntptime.settime()
+                if self.watchdog: self.watchdog.feed()  # Feed the watchdog if configured
+                ntptime.settime()
                 return True
             except Exception as e:
                 print("Error syncing time:", e)
