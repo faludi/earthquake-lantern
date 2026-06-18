@@ -288,14 +288,15 @@ async def main():
                     time_str = "{:04d}-{:02d}-{:02d} {:02d}:{:02d} UTC".format(time_str[0], time_str[1], time_str[2], time_str[3], time_str[4])
                     print(f"  Magnitude {magnitude} earthquake at {place} on {time_str}")
                     earthquake_manager.set_earthquake_data(event_time, magnitude)
-            # show a list of all recorded earthquakes with their time, magnitude, start_time and duration
-            print("Current earthquake events being tracked:")
-            for event in earthquake_manager.events:
-                print(f"  Magnitude {event['magnitude']} earthquake from {event['start_time']} replaying at {event['event_time']} with duration {event['duration_ms'] / 1000:.1f} seconds")  
             else:
                 print('No earthquake data available')
         except Exception as e:
             print('Error fetching earthquake data:', e)
+        # show a list of all recorded earthquakes with their time, magnitude, start_time and duration
+        print("Current earthquake events being tracked:")
+        for event in earthquake_manager.events:
+            print(f"  Magnitude {event['magnitude']} earthquake from {event['start_time']} replaying at {event['event_time']} with duration {event['duration_ms'] / 1000:.1f} seconds")  
+
         await watchdog_sleep(15*60*1000) # Read every 15 minutes
 
 # Create an Event Loop
