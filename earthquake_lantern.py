@@ -42,7 +42,7 @@ green_pin_2 = 9
 blue_pin_2 = 10
 LED = Pin("LED", Pin.OUT)      # digital output for status LED
 
-FETCH_INTERVAL = 60 * 60  # seconds
+FETCH_INTERVAL = 5 * 60 * 1000 # milliseconds between earthquake data fetches
 # MAGNITUDE_FACTOR_MULTIPLIER = 1.2
 # MAGNITUDE_FACTOR_K = 0.03 # how strongly the wind factor is pulled towards the center value
 # # A gentle breeze should have the most effect, and higher winds should have less effect to prevent the lantern from flickering too wildly in strong winds. 
@@ -88,24 +88,6 @@ def parse_datetime(timestamp):
     # Combine into final time format
     formatted_time = f"{month}/{day}/{year} {hour:2}:{minute:2} UTC"
     return(formatted_time)
-
-# def fetch_weather_data():
-#     try:
-#         wdt.feed()
-#         forecast = nature_client.get_forecast("current", "wind_speed_10m,wind_gusts_10m", forecast_days=1, expiry=300)
-#         if not forecast or forecast.get('wind_speed_10m') is None:
-#             return None
-#         timestamp = f"{time.gmtime()[0]:04}-{time.gmtime()[1]:02}-{time.gmtime()[2]:02}T{time.gmtime()[3]:02}:{time.gmtime()[4]:02}"
-#         return {
-#             'current': {
-#                 'wind_speed_10m': forecast.get('wind_speed_10m'),
-#                 'wind_gusts_10m': forecast.get('wind_gusts_10m'),
-#                 'time': timestamp
-#             }
-#         }
-#     except Exception as e:
-#         print('Error fetching weather data:', e)
-#         return None
     
 def fetch_earthquake_data(seconds=300):
     try:
@@ -137,47 +119,13 @@ def fetch_earthquake_data(seconds=300):
 async def watchdog_sleep(milliseconds):
     start_time = time.ticks_ms()
     while time.ticks_ms() - start_time < milliseconds:
+        # print(f"EQF: {earthquake_manager.get_earthquake_factor():.2f} | Sleeping... ({(milliseconds - (time.ticks_ms() - start_time)) / 1000:.1f}s left)")
+        factor = earthquake_manager.get_earthquake_factor()
+        count = len(earthquake_manager.events)
+        print(f"EQ Factor: {factor:.2f}, Active Events: {count}")
         wdt.feed()
         await asyncio.sleep_ms(1000)
         
-# class WindManager:
-#     def __init__(self):
-#         self.wind_factor = 0
-#         self.speed = 0
-#         self.start_time = time.ticks_ms()
-#         self.delay = 0
-
-#     def set_earthquake_data(self, wind_speed):
-#         self.speed = wind_speed
-#         self._calc_wind_factor(self.speed)
-
-#     def adjust(self, x, k=0.02, center=10):
-#         return x - k * (x - center) * abs(x - center)
-
-#     def _calc_wind_factor(self, wind_speed):
-#         self.wind_factor = max((wind_speed), 0) # protect against negative wind factor
-#         # self.wind_factor = (self.wind_factor * WIND_FACTOR_MULTIPLIER)   # increase wind factor effect
-#         self.wind_factor = self.adjust(self.wind_factor, k=0.02, center=10)
-
-#     # def _calc_gusting(self):
-#     #     if time.ticks_ms() - self.start_time > self.delay:
-#     #         self.start_time = time.ticks_ms()
-#     #         self.gust_ramp = random.randint(EVENT_LENGTH_LOW, GUST_LENGTH_HIGH) * 0.25
-#     #         if not self.gusting:
-#     #             self.gusting = True
-#     #             self.gust_factor = self.gust_factor * random.uniform(0.8, 1.2) # add some randomness to gust factor
-#     #             self.delay = random.randint(EVENT_LENGTH_LOW, GUST_LENGTH_HIGH)
-#     #             # print("Gusting for", self.delay / 1000, "secs")
-#     #         elif self.gusting:
-#     #             self.gusting = False
-#     #             self.delay = random.randint(EVENT_INTERVAL_LOW, GUST_INTERVAL_HIGH)
-#     #             # print("Next gust in", self.delay / 1000, "secs") 
-#     #     return self.wind_factor
-    
-#     def get_wind_factor(self):
-#         factor = self.wind_factor * random.uniform(0.85, 1.0) # add some randomness
-#         return factor
-    
     
 def red_light():
         global earthquake_manager
@@ -211,7 +159,7 @@ class EarthquakeManager:
     def set_earthquake_data(self, event_time, magnitude):
         # event_time is in milliseconds (from USGS API)
         # Convert to seconds and add FETCH_INTERVAL to get start_time
-        start_time = (event_time / 1000) + FETCH_INTERVAL
+        start_time = event_time + (FETCH_INTERVAL)
         duration_ms = self._calculate_duration(magnitude)
         self.events.append({
             'magnitude': magnitude,
@@ -222,11 +170,11 @@ class EarthquakeManager:
     
     def _calculate_duration(self, magnitude):
         # Duration in milliseconds: magnitude * 3
-        return magnitude * 3 * 1000  # convert to milliseconds
+        return int(magnitude * 3 * 1000)  # convert to milliseconds
     
     def _remove_expired_events(self):
         current_time = time.time()
-        self.events = [e for e in self.events if e['start_time'] + (e['duration_ms'] / 1000) > current_time]
+        self.events = [e for e in self.events if e['start_time'] + e['duration_ms'] > current_time * 1000]  # convert current time to milliseconds
     
     def get_earthquake_factor(self):
         self._remove_expired_events()
@@ -235,18 +183,20 @@ class EarthquakeManager:
         
         for event in self.events:
             start_time = event['start_time']
-            duration_sec = event['duration_ms'] / 1000  # convert to seconds
-            end_time = start_time + duration_sec
+            duration_ms = event['duration_ms']
+            end_time = start_time + duration_ms
+            # print(f"Start: {start_time}, End: {end_time}, Now: {current_time * 1000}, Mag: {event['magnitude']}, Duration: {duration_ms}ms")
             
             # Check if event is active (within start and end time)
-            if start_time <= current_time <= end_time:
-                elapsed = current_time - start_time
-                remaining = duration_sec - elapsed
-                percent_remaining = remaining / duration_sec if duration_sec > 0 else 0
+            if start_time <= ( current_time * 1000 ) <= end_time:
+                # print("event is active ")
+                elapsed = ( current_time * 1000 ) - start_time
+                remaining = duration_ms - elapsed
+                percent_remaining = remaining / duration_ms if duration_ms > 0 else 0
                 factor = event['magnitude'] * percent_remaining
                 max_factor = max(max_factor, factor)
         
-        return max_factor
+        return max_factor * 3  # multiplier to increase overall effect
 
 earthquake_manager = EarthquakeManager()
 
@@ -269,7 +219,7 @@ async def main():
             try:
                 print('Syncing time via NTP...')
                 wdt.feed()
-                ntptime.settime()
+                nature_client.sync_time()
                 print(f"DateTime: {time.gmtime()[0]}-{time.gmtime()[1]:02}-{time.gmtime()[2]:02} {time.gmtime()[3]:02}:{time.gmtime()[4]:02}:{time.gmtime()[5]:02} UTC  ")
                 next_sync = time.time() + 43200 # update every 12 hours
             except Exception as e:
@@ -277,7 +227,7 @@ async def main():
                 print("Failed to update NTP, retrying in 10 minutes.", e)
         try:
             # Fetch and display earthquake data using nature_api
-            earthquakes = fetch_earthquake_data(FETCH_INTERVAL) # get earthquakes in the past X seconds
+            earthquakes = fetch_earthquake_data(FETCH_INTERVAL // 1000) # get earthquakes in the past X seconds
             if earthquakes is not None and len(earthquakes) > 0:
                 for eq in earthquakes:
                     properties = eq.get("properties", {})
@@ -293,11 +243,12 @@ async def main():
         except Exception as e:
             print('Error fetching earthquake data:', e)
         # show a list of all recorded earthquakes with their time, magnitude, start_time and duration
+
         print("Current earthquake events being tracked:")
         for event in earthquake_manager.events:
-            print(f"  Magnitude {event['magnitude']} earthquake from {event['start_time']} replaying at {event['event_time']} with duration {event['duration_ms'] / 1000:.1f} seconds")  
-
-        await watchdog_sleep(15*60*1000) # Read every 15 minutes
+            print(f"  Magnitude {event['magnitude']} earthquake from {event['event_time']} replaying at {event['start_time']} with duration {event['duration_ms'] / 1000:.1f} seconds")  
+        
+        await watchdog_sleep(FETCH_INTERVAL) # sleep between fetches
 
 # Create an Event Loop
 wdt = WDT(timeout=8388)  # 8-second watchdog timer
@@ -305,6 +256,8 @@ loop = asyncio.get_event_loop()
 # Create a task to run the main function
 loop.create_task(main())
 _thread.start_new_thread(light_candle, ())
+
+earthquake_manager.set_earthquake_data(((time.time() * 1000) - (FETCH_INTERVAL - 20000)), 9.0)  # start 60 seconds after launch
 
 try:
     # Run the event loop indefinitely
