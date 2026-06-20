@@ -42,10 +42,14 @@ blue_pin_2 = 10
 LED = Pin("LED", Pin.OUT)      # digital output for status LED
 
 FETCH_INTERVAL = 5 * 60 * 1000 # milliseconds between earthquake data fetches
-# MAGNITUDE_FACTOR_MULTIPLIER = 1.2
-# MAGNITUDE_FACTOR_K = 0.03 # how strongly the wind factor is pulled towards the center value
-# # A gentle breeze should have the most effect, and higher winds should have less effect to prevent the lantern from flickering too wildly in strong winds. 
-# MAGNITUDE_FACTOR_CENTER = 6 # increase wind effect below this speed, decrease effect above this speed.
+FACTOR_MULTIPLIER = 4 # multiplier to increase overall effect of earthquake factor on brightness
+
+# Earthquake Generator Configuration
+EQ_GEN_MIN_INTERVAL = 5000  # milliseconds (minimum time between generated earthquakes)
+EQ_GEN_MAX_INTERVAL = 30000  # milliseconds (maximum time between generated earthquakes)
+EQ_GEN_MIN_MAGNITUDE = 0.5  # minimum magnitude for generated earthquakes
+EQ_GEN_MAX_MAGNITUDE = 2.0  # maximum magnitude for generated earthquakes
+EQ_GEN_FUTURE_SECONDS = 10  # seconds in the future when generated earthquake occurs
 
 terminateThread = False
 
@@ -88,10 +92,10 @@ def parse_datetime(timestamp):
     formatted_time = f"{month}/{day}/{year} {hour:2}:{minute:2} UTC"
     return(formatted_time)
 
-def show_time():
-    now = time.gmtime()
-    time_str = "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d} UTC".format(now[0], now[1], now[2], now[3], now[4], now[5])
-    print(f"Current Time: {time_str}")
+def format_time(timestamp):
+    time_struct = time.gmtime(timestamp // 1000)  # Convert milliseconds to seconds
+    formatted_time = "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d} UTC".format(time_struct[0], time_struct[1], time_struct[2], time_struct[3], time_struct[4], time_struct[5])
+    return formatted_time
     
 def fetch_earthquake_data(seconds=300):
     try:
@@ -134,8 +138,8 @@ async def watchdog_sleep(milliseconds):
 def red_light():
         global earthquake_manager
         factor = earthquake_manager.get_earthquake_factor()
-        red_pwm.duty( 100 - min(random.uniform(93-factor, 100), 100) )
-        red_pwm_2.duty(100 - min(random.uniform(93-factor, 100) , 100) ) 
+        red_pwm.duty( 100 - min(random.uniform(98-factor, 100), 100) )
+        red_pwm_2.duty(100 - min(random.uniform(98-factor, 100) , 100) ) 
         rand_flicker_sleep()
  
 def green_light():
@@ -160,7 +164,7 @@ class EarthquakeManager:
     def __init__(self):
         self.events = []
     
-    def set_earthquake_data(self, event_time, magnitude):
+    def set_earthquake_data(self, event_time, magnitude, simulated=False):
         # event_time is in milliseconds (from USGS API)
         # Convert to seconds and add FETCH_INTERVAL to get start_time
         start_time = event_time + (FETCH_INTERVAL)
@@ -169,7 +173,8 @@ class EarthquakeManager:
             'magnitude': magnitude,
             'event_time': event_time,
             'start_time': start_time,
-            'duration_ms': duration_ms
+            'duration_ms': duration_ms,
+            'simulated': simulated
         })
     
     def _calculate_duration(self, magnitude):
@@ -189,7 +194,6 @@ class EarthquakeManager:
             start_time = event['start_time']
             duration_ms = event['duration_ms']
             end_time = start_time + duration_ms
-            # print(f"Start: {start_time}, End: {end_time}, Now: {current_time * 1000}, Mag: {event['magnitude']}, Duration: {duration_ms}ms")
             
             # Check if event is active (within start and end time)
             if start_time <= ( current_time * 1000 ) <= end_time:
@@ -199,10 +203,30 @@ class EarthquakeManager:
                 percent_remaining = remaining / duration_ms if duration_ms > 0 else 0
                 factor = event['magnitude'] * percent_remaining
                 max_factor = max(max_factor, factor)
-        
-        return max_factor * 3  # multiplier to increase overall effect
+        return max_factor * FACTOR_MULTIPLIER  # multiplier to increase overall effect
 
 earthquake_manager = EarthquakeManager()
+
+async def earthquake_generator():
+    """Generate simulated earthquakes at random intervals."""
+    while True:
+        try:
+            # Sleep for a random interval between min and max
+            interval_ms = random.randint(EQ_GEN_MIN_INTERVAL, EQ_GEN_MAX_INTERVAL)
+            await asyncio.sleep_ms(interval_ms)
+            
+            # Generate random magnitude
+            magnitude = random.uniform(EQ_GEN_MIN_MAGNITUDE, EQ_GEN_MAX_MAGNITUDE)
+            
+            # Set event time to EQ_GEN_FUTURE_SECONDS in the future (in milliseconds)
+            event_time = int((time.time() - (FETCH_INTERVAL // 1000) + EQ_GEN_FUTURE_SECONDS) * 1000)
+            
+            # Add the simulated earthquake
+            earthquake_manager.set_earthquake_data(event_time, magnitude, simulated=True)
+            print(f"Generated simulated earthquake: Magnitude {magnitude:.2f} will play at {format_time(event_time + FETCH_INTERVAL)}")
+            
+        except Exception as e:
+            print(f"Error in earthquake generator: {e}")
 
 async def main():
     wdt.feed()
@@ -234,7 +258,7 @@ async def main():
             try:
                 # Fetch and display earthquake data using nature_api
                 next_fetch = time.time() + (FETCH_INTERVAL // 1000) # schedule next fetch
-                show_time()
+                print(f"Current Time: {format_time(time.time() * 1000)}")
                 earthquakes = fetch_earthquake_data(FETCH_INTERVAL // 1000) # get earthquakes in the past X seconds
                 if earthquakes is not None and len(earthquakes) > 0:
                     print(f"Found: {len(earthquakes)} earthquakes in past {FETCH_INTERVAL // 60000} minutes")
@@ -244,9 +268,9 @@ async def main():
                         place = properties.get("place", "N/A")
                         event_time = properties.get("updated", 0)
                         time_str = time.gmtime(event_time//1000)
-                        time_str = "{:04d}-{:02d}-{:02d} {:02d}:{:02d} UTC".format(time_str[0], time_str[1], time_str[2], time_str[3], time_str[4])
-                        print(f"  Magnitude {magnitude} earthquake at {place} on {time_str}")
-                        earthquake_manager.set_earthquake_data(event_time, magnitude)
+                        time_str = "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d} UTC".format(time_str[0], time_str[1], time_str[2], time_str[3], time_str[4], time_str[5])
+                        print(f"  Magnitude {magnitude} earthquake at {place} on {format_time(event_time)}")
+                        earthquake_manager.set_earthquake_data(event_time, magnitude, simulated=False)
                 else:
                     print('  No new earthquake data available')
             except Exception as e:
@@ -256,7 +280,8 @@ async def main():
             if len(earthquake_manager.events) > 0:
                 print("Current earthquake events being tracked:")
                 for event in earthquake_manager.events:
-                    print(f"  Magnitude {event['magnitude']} earthquake from {event['event_time']} replaying at {event['start_time']} with duration {event['duration_ms'] / 1000:.1f} seconds")  
+                    source = "[SIMULATED]" if event['simulated'] else "[REAL]"
+                    print(f"  {source} Magnitude {event['magnitude']} earthquake from {event['event_time']} replaying at {format_time(event['start_time'])} with duration {event['duration_ms'] / 1000:.1f} seconds")  
         
         await watchdog_sleep(2000) # sleep between fetches
 
@@ -265,9 +290,12 @@ wdt = WDT(timeout=8388)  # 8-second watchdog timer
 loop = asyncio.get_event_loop()
 # Create a task to run the main function
 loop.create_task(main())
+# Create a task to run the earthquake generator
+loop.create_task(earthquake_generator())
 _thread.start_new_thread(light_candle, ())
 
-# earthquake_manager.set_earthquake_data(((time.time() * 1000) - (FETCH_INTERVAL - 20000)), 9.0)  # start 60 seconds after launch
+# print("Injecting initial earthquake data for testing...")
+# earthquake_manager.set_earthquake_data(((time.time() * 1000) - (FETCH_INTERVAL - 20000)), 9.0, simulated=True)  # start 60 seconds after launch
 
 try:
     # Run the event loop indefinitely
