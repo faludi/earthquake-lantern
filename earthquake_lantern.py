@@ -17,6 +17,8 @@ from nature_api import Client
 version = "1.0.0"
 print("Earthquake Lantern WiFi - Version:", version)
 
+time.sleep(2) # allow usb connection on startup
+
 # Wi-Fi credentials
 ssid = secrets.WIFI_SSID  # your SSID name
 password = secrets.WIFI_PASSWORD  # your WiFi password
@@ -31,6 +33,9 @@ if ipgeolocation_key:
         nature_client.set_api_key('ipgeolocation', ipgeolocation_key)
     except Exception as e:
         print('Warning: failed to set ipgeolocation API key:', e)
+
+
+demo_button = Pin(2, Pin.IN, Pin.PULL_UP)
 
 red_pin = 5
 green_pin = 6
@@ -52,6 +57,7 @@ EQ_GEN_MAX_MAGNITUDE = 2.0  # maximum magnitude for generated earthquakes
 EQ_GEN_FUTURE_SECONDS = 10  # seconds in the future when generated earthquake occurs
 
 terminateThread = False
+last_button_press = 0
 
 class Pulse(PWM):
     def duty(self, percent_duty):
@@ -132,9 +138,22 @@ async def watchdog_sleep(milliseconds):
         spinner = '/' if elapsed_seconds % 2 == 0 else '\\'
         print(f" EQ Factor: {factor:.2f}, Active Events: {count}  {spinner}", end='   \r')
         wdt.feed()
-        await asyncio.sleep_ms(1000)
-        
-    
+        check_demo_button()
+        await asyncio.sleep_ms(500)
+
+def check_demo_button():
+    global last_button_press
+    if demo_button.value() == 0:  # if button is pressed
+        if time.time() - last_button_press < 10:  # debounce for 10 seconds
+            return
+        print("Demo button pressed - generating simulated earthquake")
+        magnitude = random.uniform(5, 8) # generate a strong earthquake for demo
+        event_time = int((time.time() - (FETCH_INTERVAL // 1000) + EQ_GEN_FUTURE_SECONDS) * 1000)
+        earthquake_manager.set_earthquake_data(event_time, magnitude, simulated=True)
+        print(f"Generated simulated earthquake: Magnitude {magnitude:.2f} will play at {format_time(event_time + FETCH_INTERVAL)}")
+        last_button_press = time.time()
+
+
 def red_light():
         global earthquake_manager
         factor = earthquake_manager.get_earthquake_factor()
@@ -282,7 +301,6 @@ async def main():
                 for event in earthquake_manager.events:
                     source = "[SIMULATED]" if event['simulated'] else "[REAL]"
                     print(f"  {source} Magnitude {event['magnitude']} earthquake from {event['event_time']} replaying at {format_time(event['start_time'])} with duration {event['duration_ms'] / 1000:.1f} seconds")  
-        
         await watchdog_sleep(2000) # sleep between fetches
 
 # Create an Event Loop
