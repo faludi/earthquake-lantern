@@ -12,7 +12,6 @@ import random
 import _thread
 import secrets
 import gc
-import ntptime
 from nature_api import Client
 
 version = "1.0.0"
@@ -88,11 +87,16 @@ def parse_datetime(timestamp):
     # Combine into final time format
     formatted_time = f"{month}/{day}/{year} {hour:2}:{minute:2} UTC"
     return(formatted_time)
+
+def show_time():
+    now = time.gmtime()
+    time_str = "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d} UTC".format(now[0], now[1], now[2], now[3], now[4], now[5])
+    print(f"Current Time: {time_str}")
     
 def fetch_earthquake_data(seconds=300):
     try:
         # --- EARTHQUAKES BY DATE RANGE ---
-        print(f"Earthquakes in the past {seconds} seconds (all magnitudes):")
+        # print(f"Earthquakes in the past {seconds} seconds (all magnitudes):")
         now_ts = time.time()
         seconds_ago_ts = now_ts - seconds
         now_struct = time.gmtime(now_ts)
@@ -101,8 +105,7 @@ def fetch_earthquake_data(seconds=300):
         today_str = "{:04d}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}".format(now_struct[0], now_struct[1], now_struct[2], now_struct[3], now_struct[4], now_struct[5])
         seconds_ago_str = "{:04d}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}".format(prior_struct[0], prior_struct[1], prior_struct[2], prior_struct[3], prior_struct[4], prior_struct[5])
         eq_params = {
-            "starttime": seconds_ago_str,
-            "endtime": today_str,
+            "updatedafter": seconds_ago_str,
             "minmagnitude": 0,
             "orderby": "time",
             "limit": 1000  # set a high limit for data safety
@@ -110,7 +113,7 @@ def fetch_earthquake_data(seconds=300):
         wdt.feed()
         results = nature_client.get_earthquakes(eq_params)
         features = results.get("features", [])
-        print(f"  Found: {len(features)} earthquakes in past {seconds // 60} minutes")
+        # print(f"  Found: {len(features)} earthquakes in past {seconds // 60} minutes")
         return features
     except Exception as e:
         print('Error fetching earthquake data:', e)
@@ -119,10 +122,11 @@ def fetch_earthquake_data(seconds=300):
 async def watchdog_sleep(milliseconds):
     start_time = time.ticks_ms()
     while time.ticks_ms() - start_time < milliseconds:
-        # print(f"EQF: {earthquake_manager.get_earthquake_factor():.2f} | Sleeping... ({(milliseconds - (time.ticks_ms() - start_time)) / 1000:.1f}s left)")
         factor = earthquake_manager.get_earthquake_factor()
         count = len(earthquake_manager.events)
-        print(f"EQ Factor: {factor:.2f}, Active Events: {count}")
+        elapsed_seconds = (time.ticks_ms() - start_time) // 1000
+        spinner = '/' if elapsed_seconds % 2 == 0 else '\\'
+        print(f" EQ Factor: {factor:.2f}, Active Events: {count}  {spinner}", end='   \r')
         wdt.feed()
         await asyncio.sleep_ms(1000)
         
@@ -211,8 +215,10 @@ async def main():
         print('NTP sync failed, continuing with local time if available.')
 
     next_sync = time.time()
+    next_fetch = time.time()
     while True:
         wdt.feed()
+        gc.collect()
         if not nature_client.wifi_connected:
             break # exit if no connection
         if (time.time() >= next_sync):
@@ -220,35 +226,39 @@ async def main():
                 print('Syncing time via NTP...')
                 wdt.feed()
                 nature_client.sync_time()
-                print(f"DateTime: {time.gmtime()[0]}-{time.gmtime()[1]:02}-{time.gmtime()[2]:02} {time.gmtime()[3]:02}:{time.gmtime()[4]:02}:{time.gmtime()[5]:02} UTC  ")
                 next_sync = time.time() + 43200 # update every 12 hours
             except Exception as e:
                 next_sync = time.time() + 600 # try again in 10 minutes
                 print("Failed to update NTP, retrying in 10 minutes.", e)
-        try:
-            # Fetch and display earthquake data using nature_api
-            earthquakes = fetch_earthquake_data(FETCH_INTERVAL // 1000) # get earthquakes in the past X seconds
-            if earthquakes is not None and len(earthquakes) > 0:
-                for eq in earthquakes:
-                    properties = eq.get("properties", {})
-                    magnitude = properties.get("mag", "N/A")
-                    place = properties.get("place", "N/A")
-                    event_time = properties.get("time", 0)
-                    time_str = time.gmtime(event_time//1000)
-                    time_str = "{:04d}-{:02d}-{:02d} {:02d}:{:02d} UTC".format(time_str[0], time_str[1], time_str[2], time_str[3], time_str[4])
-                    print(f"  Magnitude {magnitude} earthquake at {place} on {time_str}")
-                    earthquake_manager.set_earthquake_data(event_time, magnitude)
-            else:
-                print('No earthquake data available')
-        except Exception as e:
-            print('Error fetching earthquake data:', e)
-        # show a list of all recorded earthquakes with their time, magnitude, start_time and duration
-
-        print("Current earthquake events being tracked:")
-        for event in earthquake_manager.events:
-            print(f"  Magnitude {event['magnitude']} earthquake from {event['event_time']} replaying at {event['start_time']} with duration {event['duration_ms'] / 1000:.1f} seconds")  
+        if (time.time() >= next_fetch):
+            try:
+                # Fetch and display earthquake data using nature_api
+                next_fetch = time.time() + (FETCH_INTERVAL // 1000) # schedule next fetch
+                show_time()
+                earthquakes = fetch_earthquake_data(FETCH_INTERVAL // 1000) # get earthquakes in the past X seconds
+                if earthquakes is not None and len(earthquakes) > 0:
+                    print(f"Found: {len(earthquakes)} earthquakes in past {FETCH_INTERVAL // 60000} minutes")
+                    for eq in earthquakes:
+                        properties = eq.get("properties", {})
+                        magnitude = properties.get("mag", "N/A")
+                        place = properties.get("place", "N/A")
+                        event_time = properties.get("updated", 0)
+                        time_str = time.gmtime(event_time//1000)
+                        time_str = "{:04d}-{:02d}-{:02d} {:02d}:{:02d} UTC".format(time_str[0], time_str[1], time_str[2], time_str[3], time_str[4])
+                        print(f"  Magnitude {magnitude} earthquake at {place} on {time_str}")
+                        earthquake_manager.set_earthquake_data(event_time, magnitude)
+                else:
+                    print('  No new earthquake data available')
+            except Exception as e:
+                print('Error fetching earthquake data:', e)
+       
+            # show a list of all recorded earthquakes with their time, magnitude, start_time and duration
+            if len(earthquake_manager.events) > 0:
+                print("Current earthquake events being tracked:")
+                for event in earthquake_manager.events:
+                    print(f"  Magnitude {event['magnitude']} earthquake from {event['event_time']} replaying at {event['start_time']} with duration {event['duration_ms'] / 1000:.1f} seconds")  
         
-        await watchdog_sleep(FETCH_INTERVAL) # sleep between fetches
+        await watchdog_sleep(2000) # sleep between fetches
 
 # Create an Event Loop
 wdt = WDT(timeout=8388)  # 8-second watchdog timer
@@ -257,7 +267,7 @@ loop = asyncio.get_event_loop()
 loop.create_task(main())
 _thread.start_new_thread(light_candle, ())
 
-earthquake_manager.set_earthquake_data(((time.time() * 1000) - (FETCH_INTERVAL - 20000)), 9.0)  # start 60 seconds after launch
+# earthquake_manager.set_earthquake_data(((time.time() * 1000) - (FETCH_INTERVAL - 20000)), 9.0)  # start 60 seconds after launch
 
 try:
     # Run the event loop indefinitely
