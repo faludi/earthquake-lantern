@@ -47,14 +47,14 @@ blue_pin_2 = 10
 LED = Pin("LED", Pin.OUT)      # digital output for status LED
 
 FETCH_INTERVAL = 5 * 60 * 1000 # milliseconds between earthquake data fetches
-FACTOR_MULTIPLIER = 4 # multiplier to increase overall effect of earthquake factor on brightness
+FACTOR_MULTIPLIER = 4.5 # multiplier to increase overall effect of earthquake factor on brightness
 
 # Earthquake Generator Configuration
-EQ_GEN_MIN_INTERVAL = 5000  # milliseconds (minimum time between generated earthquakes)
-EQ_GEN_MAX_INTERVAL = 30000  # milliseconds (maximum time between generated earthquakes)
-EQ_GEN_MIN_MAGNITUDE = 0.5  # minimum magnitude for generated earthquakes
-EQ_GEN_MAX_MAGNITUDE = 2.0  # maximum magnitude for generated earthquakes
-EQ_GEN_FUTURE_SECONDS = 10  # seconds in the future when generated earthquake occurs
+EQ_GEN_MIN_INTERVAL = 3000  # milliseconds (minimum time between generated earthquakes)
+EQ_GEN_MAX_INTERVAL = 20000  # milliseconds (maximum time between generated earthquakes)
+EQ_GEN_MIN_MAGNITUDE = 0.75 # minimum magnitude for generated earthquakes
+EQ_GEN_MAX_MAGNITUDE = 2.5  # maximum magnitude for generated earthquakes
+EQ_GEN_FUTURE_SECONDS = 5  # seconds in the future when generated earthquake occurs
 
 terminateThread = False
 last_button_press = 0
@@ -147,7 +147,7 @@ def check_demo_button():
         if time.time() - last_button_press < 10:  # debounce for 10 seconds
             return
         print("Demo button pressed - generating simulated earthquake")
-        magnitude = random.uniform(5, 8) # generate a strong earthquake for demo
+        magnitude = random.uniform(6, 7) # generate a strong earthquake for demo
         event_time = int((time.time() - (FETCH_INTERVAL // 1000) + EQ_GEN_FUTURE_SECONDS) * 1000)
         earthquake_manager.set_earthquake_data(event_time, magnitude, simulated=True)
         print(f"Generated simulated earthquake: Magnitude {magnitude:.2f} will play at {format_time(event_time + FETCH_INTERVAL)}")
