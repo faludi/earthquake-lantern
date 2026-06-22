@@ -14,7 +14,7 @@ import secrets
 import gc
 from nature_api import Client
 
-version = "1.0.0"
+version = "1.0.1"
 print("Earthquake Lantern WiFi - Version:", version)
 
 time.sleep(2) # allow usb connection on startup
