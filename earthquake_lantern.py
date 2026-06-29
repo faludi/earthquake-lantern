@@ -14,7 +14,7 @@ import secrets
 import gc
 from nature_api import Client
 
-version = "1.0.1"
+version = "1.0.3"
 print("Earthquake Lantern WiFi - Version:", version)
 
 time.sleep(2) # allow usb connection on startup
@@ -25,7 +25,7 @@ password = secrets.WIFI_PASSWORD  # your WiFi password
 
 wdt = WDT(timeout=8388)  # 8-second watchdog timer
 
-nature_client = Client(ssid, password, debug_mode=False, watchdog=wdt)
+nature_client = Client(ssid, password, debug_mode=True, watchdog=wdt)
 
 ipgeolocation_key = getattr(secrets, 'IPGEOLOCATION_API_KEY', None)
 if ipgeolocation_key:
@@ -46,14 +46,15 @@ green_pin_2 = 9
 blue_pin_2 = 10
 LED = Pin("LED", Pin.OUT)      # digital output for status LED
 
+LOGGING_ENABLED = False # set to True to enable CSV logging of earthquakes
 FETCH_INTERVAL = 5 * 60 * 1000 # milliseconds between earthquake data fetches
 FACTOR_MULTIPLIER = 4.5 # multiplier to increase overall effect of earthquake factor on brightness
 
 # Earthquake Generator Configuration
 EQ_GEN_MIN_INTERVAL = 3000  # milliseconds (minimum time between generated earthquakes)
-EQ_GEN_MAX_INTERVAL = 20000  # milliseconds (maximum time between generated earthquakes)
+EQ_GEN_MAX_INTERVAL = 15000  # milliseconds (maximum time between generated earthquakes)
 EQ_GEN_MIN_MAGNITUDE = 0.75 # minimum magnitude for generated earthquakes
-EQ_GEN_MAX_MAGNITUDE = 2.5  # maximum magnitude for generated earthquakes
+EQ_GEN_MAX_MAGNITUDE = 2.0  # maximum magnitude for generated earthquakes
 EQ_GEN_FUTURE_SECONDS = 5  # seconds in the future when generated earthquake occurs
 
 terminateThread = False
@@ -103,6 +104,48 @@ def format_time(timestamp):
     formatted_time = "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d} UTC".format(time_struct[0], time_struct[1], time_struct[2], time_struct[3], time_struct[4], time_struct[5])
     return formatted_time
     
+# CSV logging for earthquakes
+CSV_FILE = 'earthquakes.csv'
+MAX_CSV_RECORDS = 10000
+
+def _read_existing_rows():
+    try:
+        with open(CSV_FILE, 'r') as f:
+            lines = f.readlines()
+    except Exception:
+        return []
+    # strip header if present
+    if len(lines) > 0 and lines[0].lower().startswith('event_id,'):
+        return [l for l in lines[1:] if l.strip()]
+    return [l for l in lines if l.strip()]
+
+def log_earthquake_to_csv(event_id, place, magnitude, original_time, event_time):
+    """Append an earthquake record to CSV and ensure file is limited to MAX_CSV_RECORDS rows.
+
+    Fields: event_id, place, magnitude, original_time, event_time
+    Times are written in human-readable UTC using `format_time`.
+    """
+    try:
+        # sanitize place to avoid breaking CSV (replace commas)
+        place_safe = str(place).replace(',', ';')
+        orig_str = format_time(original_time) if original_time else ''
+        evt_str = format_time(event_time) if event_time else ''
+        row = '{},{},{},{},{}\n'.format(event_id, place_safe, magnitude, orig_str, evt_str)
+
+        rows = _read_existing_rows()
+        rows.append(row)
+
+        # trim to last MAX_CSV_RECORDS
+        if len(rows) > MAX_CSV_RECORDS:
+            rows = rows[-MAX_CSV_RECORDS:]
+
+        # write back with header
+        with open(CSV_FILE, 'w') as f:
+            f.write('event_id,place,magnitude,original_time,event_time\n')
+            for r in rows:
+                f.write(r)
+    except Exception as e:
+        print('Failed to log earthquake to CSV:', e)
 def fetch_earthquake_data(seconds=300):
     try:
         # --- EARTHQUAKES BY DATE RANGE ---
@@ -147,7 +190,7 @@ def check_demo_button():
         if time.time() - last_button_press < 10:  # debounce for 10 seconds
             return
         print("Demo button pressed - generating simulated earthquake")
-        magnitude = random.uniform(6, 7) # generate a strong earthquake for demo
+        magnitude = random.uniform(5, 6) # generate a strong earthquake for demo
         event_time = int((time.time() - (FETCH_INTERVAL // 1000) + EQ_GEN_FUTURE_SECONDS) * 1000)
         earthquake_manager.set_earthquake_data(event_time, magnitude, simulated=True)
         print(f"Generated simulated earthquake: Magnitude {magnitude:.2f} will play at {format_time(event_time + FETCH_INTERVAL)}")
@@ -157,8 +200,8 @@ def check_demo_button():
 def red_light():
         global earthquake_manager
         factor = earthquake_manager.get_earthquake_factor()
-        red_pwm.duty( 100 - min(random.uniform(98-factor, 100), 100) )
-        red_pwm_2.duty(100 - min(random.uniform(98-factor, 100) , 100) ) 
+        red_pwm.duty( 100 - min(random.uniform(96-factor, 100), 100) )
+        red_pwm_2.duty(100 - min(random.uniform(96-factor, 100) , 100) ) 
         rand_flicker_sleep()
  
 def green_light():
@@ -285,10 +328,18 @@ async def main():
                         properties = eq.get("properties", {})
                         magnitude = properties.get("mag", "N/A")
                         place = properties.get("place", "N/A")
+                        original_time = properties.get("time", 0)
+                        event_id = eq.get("id", "N/A")
                         event_time = properties.get("updated", 0)
                         time_str = time.gmtime(event_time//1000)
                         time_str = "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d} UTC".format(time_str[0], time_str[1], time_str[2], time_str[3], time_str[4], time_str[5])
-                        print(f"  Magnitude {magnitude} earthquake at {place} on {format_time(event_time)}")
+                        print(f"  Magnitude {magnitude} earthquake at {place} on {format_time(original_time)}, updated {format_time(event_time)} with event ID {event_id}")
+                        if LOGGING_ENABLED:
+                            try:
+                                log_earthquake_to_csv(event_id, place, magnitude, original_time, event_time)
+                            except Exception as e:
+                                print('CSV log error:', e)
+                        
                         earthquake_manager.set_earthquake_data(event_time, magnitude, simulated=False)
                 else:
                     print('  No new earthquake data available')
