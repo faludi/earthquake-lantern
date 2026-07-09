@@ -12,9 +12,13 @@ import random
 import _thread
 import secrets
 import gc
+try:
+    import ujson as json
+except ImportError:
+    import json
 from nature_api import Client
 
-version = "1.0.3"
+version = "1.0.6"
 print("Earthquake Lantern WiFi - Version:", version)
 
 time.sleep(2) # allow usb connection on startup
@@ -25,7 +29,7 @@ password = secrets.WIFI_PASSWORD  # your WiFi password
 
 wdt = WDT(timeout=8388)  # 8-second watchdog timer
 
-nature_client = Client(ssid, password, debug_mode=True, watchdog=wdt)
+nature_client = Client(ssid, password, debug_mode=False, watchdog=wdt)
 
 ipgeolocation_key = getattr(secrets, 'IPGEOLOCATION_API_KEY', None)
 if ipgeolocation_key:
@@ -46,7 +50,9 @@ green_pin_2 = 9
 blue_pin_2 = 10
 LED = Pin("LED", Pin.OUT)      # digital output for status LED
 
+SIMULATE_EARTHQUAKES = False # set to False to disable simulated earthquakes
 LOGGING_ENABLED = False # set to True to enable CSV logging of earthquakes
+ADAFRUIT_LOGGING_ENABLED = True # set to True to enable Adafruit IO logging of earthquakes
 FETCH_INTERVAL = 5 * 60 * 1000 # milliseconds between earthquake data fetches
 FACTOR_MULTIPLIER = 4.5 # multiplier to increase overall effect of earthquake factor on brightness
 
@@ -108,6 +114,44 @@ def format_time(timestamp):
 CSV_FILE = 'earthquakes.csv'
 MAX_CSV_RECORDS = 10000
 
+# Earthquake ID tracking and persistence
+quake_ids = {}
+QUAKE_ID_FILE = 'quake_ids.json'
+MAX_QUAKE_IDS = 10000
+QUAKE_ID_SAVE_INTERVAL = 3600  # seconds between backup saves
+last_quake_id_save = 0
+
+def _trim_quake_ids():
+    global quake_ids
+    if len(quake_ids) <= MAX_QUAKE_IDS:
+        return
+    # keep the most recently updated event IDs by timestamp
+    items = sorted(quake_ids.items(), key=lambda item: item[1], reverse=True)
+    quake_ids = dict(items[:MAX_QUAKE_IDS])
+
+def save_quake_ids():
+    try:
+        _trim_quake_ids()
+        with open(QUAKE_ID_FILE, 'w') as f:
+            f.write(json.dumps(quake_ids))
+    except Exception as e:
+        print('Failed to save quake_ids:', e)
+
+def load_quake_ids():
+    global quake_ids
+    try:
+        with open(QUAKE_ID_FILE, 'r') as f:
+            data = json.loads(f.read())
+            if isinstance(data, dict):
+                quake_ids = data
+                _trim_quake_ids()
+                print(f"Loaded {len(quake_ids)} quake_ids from {QUAKE_ID_FILE}")
+                return
+    except Exception:
+        pass
+    quake_ids = {}
+    print(f"No quake_id cache loaded from {QUAKE_ID_FILE}")
+
 def _read_existing_rows():
     try:
         with open(CSV_FILE, 'r') as f:
@@ -146,6 +190,7 @@ def log_earthquake_to_csv(event_id, place, magnitude, original_time, event_time)
                 f.write(r)
     except Exception as e:
         print('Failed to log earthquake to CSV:', e)
+
 def fetch_earthquake_data(seconds=300):
     try:
         # --- EARTHQUAKES BY DATE RANGE ---
@@ -192,7 +237,7 @@ def check_demo_button():
         print("Demo button pressed - generating simulated earthquake")
         magnitude = random.uniform(5, 6) # generate a strong earthquake for demo
         event_time = int((time.time() - (FETCH_INTERVAL // 1000) + EQ_GEN_FUTURE_SECONDS) * 1000)
-        earthquake_manager.set_earthquake_data(event_time, magnitude, simulated=True)
+        earthquake_manager.set_earthquake_data(event_time, place="Demo Button", magnitude=magnitude, simulated=True)
         print(f"Generated simulated earthquake: Magnitude {magnitude:.2f} will play at {format_time(event_time + FETCH_INTERVAL)}")
         last_button_press = time.time()
 
@@ -200,8 +245,8 @@ def check_demo_button():
 def red_light():
         global earthquake_manager
         factor = earthquake_manager.get_earthquake_factor()
-        red_pwm.duty( 100 - min(random.uniform(96-factor, 100), 100) )
-        red_pwm_2.duty(100 - min(random.uniform(96-factor, 100) , 100) ) 
+        red_pwm.duty( 100 - min(random.uniform(99-factor, 100), 100) )
+        red_pwm_2.duty(100 - min(random.uniform(99-factor, 100) , 100) ) 
         rand_flicker_sleep()
  
 def green_light():
@@ -226,18 +271,44 @@ class EarthquakeManager:
     def __init__(self):
         self.events = []
     
-    def set_earthquake_data(self, event_time, magnitude, simulated=False):
+    def set_earthquake_data(self, event_time, place,magnitude, simulated=False):
         # event_time is in milliseconds (from USGS API)
         # Convert to seconds and add FETCH_INTERVAL to get start_time
         start_time = event_time + (FETCH_INTERVAL)
         duration_ms = self._calculate_duration(magnitude)
-        self.events.append({
+        data = {
             'magnitude': magnitude,
+            'place': place,
             'event_time': event_time,
             'start_time': start_time,
             'duration_ms': duration_ms,
             'simulated': simulated
-        })
+        }
+        self.events.append(data)
+        if ADAFRUIT_LOGGING_ENABLED:
+            self.log_earthquake_events(f"{magnitude:.1f} mag {place} plays {format_time(start_time)} (simulated: {simulated})")
+
+    def log_earthquake_events(self, data_string):
+        import requests
+        ADAFRUIT_IO_KEY = secrets.ADAFRUIT_IO_KEY
+        ADAFRUIT_IO_USERNAME = secrets.ADAFRUIT_IO_USERNAME
+        self.headers = {
+            "X-AIO-Key": ADAFRUIT_IO_KEY,
+            "Content-Type": "application/json"
+        }
+        data = {
+            "value": data_string
+        }
+        # Log earthquake events to Adafruit IO
+        wdt.feed()
+        try:
+            response = requests.post(f"https://io.adafruit.com/api/v2/{ADAFRUIT_IO_USERNAME}/feeds/log/data?x-aio-key={ADAFRUIT_IO_KEY}", headers=self.headers, json=data, timeout=10)
+            if response.status_code == 200:
+                print("Logged earthquake event to Adafruit IO")
+            else:
+                print(f"Failed to log earthquake event to Adafruit IO: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(f"Error logging earthquake event to Adafruit IO: {e}")
     
     def _calculate_duration(self, magnitude):
         # Duration in milliseconds: magnitude * 3
@@ -268,6 +339,8 @@ class EarthquakeManager:
         return max_factor * FACTOR_MULTIPLIER  # multiplier to increase overall effect
 
 earthquake_manager = EarthquakeManager()
+load_quake_ids()
+last_quake_id_save = time.time()
 
 async def earthquake_generator():
     """Generate simulated earthquakes at random intervals."""
@@ -284,7 +357,7 @@ async def earthquake_generator():
             event_time = int((time.time() - (FETCH_INTERVAL // 1000) + EQ_GEN_FUTURE_SECONDS) * 1000)
             
             # Add the simulated earthquake
-            earthquake_manager.set_earthquake_data(event_time, magnitude, simulated=True)
+            earthquake_manager.set_earthquake_data(event_time, place="Simulated Location", magnitude=magnitude, simulated=True)
             print(f"Generated simulated earthquake: Magnitude {magnitude:.2f} will play at {format_time(event_time + FETCH_INTERVAL)}")
             
         except Exception as e:
@@ -331,20 +404,37 @@ async def main():
                         original_time = properties.get("time", 0)
                         event_id = eq.get("id", "N/A")
                         event_time = properties.get("updated", 0)
-                        time_str = time.gmtime(event_time//1000)
-                        time_str = "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d} UTC".format(time_str[0], time_str[1], time_str[2], time_str[3], time_str[4], time_str[5])
                         print(f"  Magnitude {magnitude} earthquake at {place} on {format_time(original_time)}, updated {format_time(event_time)} with event ID {event_id}")
-                        if LOGGING_ENABLED:
-                            try:
-                                log_earthquake_to_csv(event_id, place, magnitude, original_time, event_time)
-                            except Exception as e:
-                                print('CSV log error:', e)
-                        
-                        earthquake_manager.set_earthquake_data(event_time, magnitude, simulated=False)
+
+                        now_ts = int(time.time())
+                        if event_id != "N/A" and event_id in quake_ids:
+                            quake_ids[event_id] = now_ts
+                            print(f"  Event ID {event_id} already recorded, updating timestamp")
+                            _trim_quake_ids()
+                        else:
+                            if event_id != "N/A":
+                                quake_ids[event_id] = now_ts
+                                _trim_quake_ids()
+                            if LOGGING_ENABLED:
+                                try:
+                                    log_earthquake_to_csv(event_id, place, magnitude, original_time, event_time)
+                                except Exception as e:
+                                    print('CSV log error:', e)
+                            earthquake_manager.set_earthquake_data(event_time, place, magnitude, simulated=False)
                 else:
                     print('  No new earthquake data available')
             except Exception as e:
                 print('Error fetching earthquake data:', e)
+
+            # save quake_id cache hourly as a backup
+            try:
+                global last_quake_id_save
+                if time.time() >= last_quake_id_save + QUAKE_ID_SAVE_INTERVAL:
+                    save_quake_ids()
+                    last_quake_id_save = time.time()
+                    print(f"Saved quake_id backup to {QUAKE_ID_FILE} at {format_time(last_quake_id_save * 1000)}")
+            except Exception as e:
+                print('Error saving quake_id backup:', e)
        
             # show a list of all recorded earthquakes with their time, magnitude, start_time and duration
             if len(earthquake_manager.events) > 0:
@@ -359,8 +449,9 @@ wdt = WDT(timeout=8388)  # 8-second watchdog timer
 loop = asyncio.get_event_loop()
 # Create a task to run the main function
 loop.create_task(main())
-# Create a task to run the earthquake generator
-loop.create_task(earthquake_generator())
+if SIMULATE_EARTHQUAKES:
+    # Create a task to run the earthquake generator
+    loop.create_task(earthquake_generator())   
 _thread.start_new_thread(light_candle, ())
 
 # print("Injecting initial earthquake data for testing...")
@@ -376,6 +467,7 @@ except KeyboardInterrupt:
     red_pwm_2.duty(100)
     green_pwm.duty(100)
     green_pwm_2.duty(100)
+    save_quake_ids()
     print('Program Interrupted by the user')
     terminateThread = True
 

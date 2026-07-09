@@ -7,7 +7,7 @@ from Url_encode import url_encode
 import machine
 import ntptime
 
-__version__ = "0.1.12"
+__version__ = "0.1.14"
 
 class Client:
     def __init__(self, ssid, password, debug_mode=False, watchdog=None):
@@ -23,6 +23,33 @@ class Client:
         self.debug_mode = debug_mode
         # In-memory TTL cache for fetched data: key -> { 'value': ..., 'expires_at': ... }
         self._cache = {}
+        # Endpoint specifications for generic request handling
+        self._endpoint_specs = {
+            "weather": {
+                "base": "https://api.open-meteo.com/v1/forecast",
+                "param_style": "csv",
+                "requires_location": True,
+                "requires_key": False,
+            },
+            "marine": {
+                "base": "https://marine-api.open-meteo.com/v1/marine",
+                "param_style": "csv",
+                "requires_location": True,
+                "requires_key": False,
+            },
+            "astronomy": {
+                "base": "https://api.ipgeolocation.io/v3/astronomy",
+                "param_style": "apiKey+coords",
+                "requires_location": True,
+                "requires_key": True,
+            },
+            "earthquakes": {
+                "base": "https://earthquake.usgs.gov/fdsnws/event/1/query",
+                "param_style": "usgs",
+                "requires_location": False,
+                "requires_key": False,
+            },
+        }
 
     def connect_wifi(self, attempts_per_cycle=10, max_cycles=10):
         while max_cycles > 0:
@@ -135,6 +162,12 @@ class Client:
         except Exception as e:
             print('Error fetching location data:', e)
 
+    def set_coordinates(self, latitude, longitude):
+        self.location = {
+            "latitude": latitude,
+            "longitude": longitude
+        }
+
     def _cache_key(self, category, parameter):
         """Create a cache key that includes category, parameter and current location.
         Falls back to a generic key if location is not set."""
@@ -234,6 +267,71 @@ class Client:
             return results[parameters[0]]
         return results
 
+    def _build_url_from_spec(self, spec, category, params_to_fetch, extra_opts):
+        # Helper builder for simple spec styles (csv and apiKey+coords)
+        lat = None
+        lon = None
+        if self.location and 'latitude' in self.location and 'longitude' in self.location:
+            lat = self.location['latitude']
+            lon = self.location['longitude']
+
+        if spec.get('param_style') == 'csv':
+            params_fetch_string = ",".join(params_to_fetch)
+            url = f"{spec['base']}?latitude={lat}&longitude={lon}&{category}={params_fetch_string}"
+            # pass-through common extras like forecast_days
+            if extra_opts and 'forecast_days' in extra_opts:
+                url += f"&forecast_days={extra_opts['forecast_days']}"
+            return url
+
+        if spec.get('param_style') == 'apiKey+coords':
+            api_key = self.ipgeolocation_api_key
+            url = f"{spec['base']}?apiKey={api_key}&lat={lat}&long={lon}"
+            return url
+
+        # Fallback: return base URL
+        return spec.get('base')
+
+    def _generic_get(self, endpoint_name, category, parameters, expiry=900, parse_fn=None, **opts):
+        spec = self._endpoint_specs.get(endpoint_name)
+        if not spec:
+            raise ValueError(f"Unknown endpoint: {endpoint_name}")
+
+        if spec.get('requires_location') and not self.location:
+            raise ValueError("Location is not set.")
+
+        if spec.get('requires_key') and not self.ipgeolocation_api_key:
+            raise ValueError("API key is required for this endpoint.")
+
+        style = spec.get('param_style')
+
+        if style in ('csv', 'apiKey+coords'):
+            def build_url_fn(params_to_fetch):
+                return self._build_url_from_spec(spec, category, params_to_fetch, opts)
+
+            def default_parse_fn(data, params_to_fetch):
+                if isinstance(data, dict):
+                    category_data = data.get(category)
+                else:
+                    category_data = None
+                return {
+                    parameter: category_data[parameter]
+                    if isinstance(category_data, dict) and parameter in category_data
+                    else None
+                    for parameter in params_to_fetch
+                }
+
+            chosen_parser = parse_fn if parse_fn is not None else default_parse_fn
+            return self._execute_parameterized_request(category, parameters, expiry, build_url_fn, chosen_parser)
+
+        if style == 'usgs':
+            # parameters in this case is expected to be a dict of query params
+            if not isinstance(parameters, dict):
+                raise ValueError('For USGS style endpoints, parameters must be a dict')
+            url, query_string = self._build_usgs_url(parameters)
+            return self._execute_request(url, expiry=expiry, cache_category='earthquakes', cache_key=query_string)
+
+        raise NotImplementedError(f"Unsupported param_style: {style}")
+
     def get_location(self):
         if not self.location:
             return None
@@ -248,44 +346,22 @@ class Client:
         return self.utc_offset
 
     
-    def get_forecast(self, category, parameters, forecast_days=1, expiry=900):
+    def get_weather(self, category, parameters, forecast_days=1, expiry=900):
         if not self.wifi_connected:
             raise ConnectionError("Wi-Fi is not connected.")
-        
-        if not self.location:
-            raise ValueError("Location is not set.")
 
-        location = self.location
-        assert location is not None
-
-        def build_forecast_url(params_to_fetch):
-            params_fetch_string = ",".join(params_to_fetch)
-            return (
-                f"https://api.open-meteo.com/v1/forecast?latitude={location['latitude']}"
-                f"&longitude={location['longitude']}&{category}={params_fetch_string}"
-                f"&forecast_days={forecast_days}"
-            )
-
-        def parse_forecast_response(data, params_to_fetch):
-            if isinstance(data, dict):
-                category_data = data.get(category)
-            else:
-                category_data = None
-            return {
-                parameter: category_data[parameter]
-                if isinstance(category_data, dict) and parameter in category_data
-                else None
-                for parameter in params_to_fetch
-            }
-
-        return self._execute_parameterized_request(
-            category,
-            parameters,
-            expiry,
-            build_forecast_url,
-            parse_forecast_response,
-        )
+        return self._generic_get('weather', category, parameters, expiry=expiry, forecast_days=forecast_days)
     
+    def get_forecast(self, category, parameters, forecast_days=1, expiry=900):
+        print(('"get_forecast" is deprecated, use "get_weather" instead.'))
+        return self.get_weather(category, parameters, forecast_days=forecast_days, expiry=expiry)
+    
+    def get_marine(self, category, parameters, forecast_days=1, expiry=900):
+        if not self.wifi_connected:
+            raise ConnectionError("Wi-Fi is not connected.")
+
+        return self._generic_get('marine', category, parameters, expiry=expiry, forecast_days=forecast_days)
+
     def set_api_key(self, type, key):
         if type == "ipgeolocation":
             self.ipgeolocation_api_key = key
@@ -295,23 +371,14 @@ class Client:
     def get_astronomy(self, category, parameter, expiry=900):
         if not self.wifi_connected:
             raise ConnectionError("Wi-Fi is not connected.")
-        
+
         if not self.location:
             raise ValueError("Location is not set.")
-
-        location = self.location
-        assert location is not None
 
         if not self.ipgeolocation_api_key:
             raise ValueError("API key is required for astronomy data.")
 
-        def build_astronomy_url(params_to_fetch):
-            return (
-                f"https://api.ipgeolocation.io/v3/astronomy?apiKey={self.ipgeolocation_api_key}"
-                f"&lat={location['latitude']}&long={location['longitude']}"
-            )
-
-        def parse_astronomy_response(data, params_to_fetch):
+        def astronomy_parser(data, params_to_fetch):
             if isinstance(data, dict):
                 category_data = data.get(category)
             else:
@@ -327,13 +394,7 @@ class Client:
                     results[param] = None
             return results
 
-        return self._execute_parameterized_request(
-            category,
-            parameter,
-            expiry,
-            build_astronomy_url,
-            parse_astronomy_response,
-        )
+        return self._generic_get('astronomy', category, parameter, expiry=expiry, parse_fn=astronomy_parser)
 
     def _request_hash(self, params):
         if not isinstance(params, dict):
@@ -362,6 +423,20 @@ class Client:
         except OSError:
             pass
         return mapping
+
+    def _build_usgs_url(self, params):
+        # Build a USGS query string similar to previous implementation
+        if not isinstance(params, dict):
+            raise ValueError("params must be a dict of USGS query parameters")
+
+        query_params = dict(params)
+        query_params.setdefault('format', 'geojson')
+
+        url_encoder = url_encode()
+        query_string = "&".join(
+            f"{key}={url_encoder.encode(str(value))}" for key, value in query_params.items()
+        )
+        return f"https://earthquake.usgs.gov/fdsnws/event/1/query?{query_string}", query_string
 
     def _save_earthquake_id_map(self, filename, mapping):
         try:
@@ -436,18 +511,10 @@ class Client:
         if not params:
             raise ValueError("params must contain at least one query parameter")
 
-        query_params = dict(params)
-        query_params.setdefault('format', 'geojson')
-
-        url_encoder = url_encode()
-        query_string = "&".join(
-            f"{key}={url_encoder.encode(str(value))}" for key, value in query_params.items()
-        )
-
+        quake_url, query_string = self._build_usgs_url(params)
         if self.debug_mode:
             print(f"Requesting earthquakes with query: {query_string}")
 
-        quake_url = f"https://earthquake.usgs.gov/fdsnws/event/1/query?{query_string}"
         return self._execute_request(quake_url, expiry=expiry, cache_category='earthquakes', cache_key=query_string)
 
        
