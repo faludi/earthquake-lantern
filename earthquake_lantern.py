@@ -343,7 +343,7 @@ class EarthquakeManager:
                 elapsed = ( current_time * 1000 ) - start_time
                 remaining = duration_ms - elapsed
                 percent_remaining = remaining / duration_ms if duration_ms > 0 else 0
-                factor = self._adjust(event['magnitude'] * percent_remaining)
+                factor = self._adjust(event['magnitude']) * percent_remaining
                 max_factor = max(max_factor, factor)
         return max_factor * FACTOR_MULTIPLIER  # multiplier to increase overall effect
 
