@@ -18,7 +18,7 @@ except ImportError:
     import json
 from nature_api import Client
 
-version = "1.0.6"
+version = "1.0.7"
 print("Earthquake Lantern WiFi - Version:", version)
 
 time.sleep(2) # allow usb connection on startup
@@ -55,6 +55,11 @@ LOGGING_ENABLED = False # set to True to enable CSV logging of earthquakes
 ADAFRUIT_LOGGING_ENABLED = True # set to True to enable Adafruit IO logging of earthquakes
 FETCH_INTERVAL = 5 * 60 * 1000 # milliseconds between earthquake data fetches
 FACTOR_MULTIPLIER = 4.5 # multiplier to increase overall effect of earthquake factor on brightness
+MAX_LOOKBACK = 24 * 60 * 60 # seconds to look back for earthquakes (24 hours)
+
+FACTOR_K = 0.02 # how strongly the wind factor is pulled towards the center value
+# A gentle breeze should have the most effect, and higher winds should have less effect to prevent the lantern from flickering too wildly in strong winds. 
+FACTOR_CENTER = 10 # increase wind effect below this speed, decrease effect above this speed.
 
 # Earthquake Generator Configuration
 EQ_GEN_MIN_INTERVAL = 3000  # milliseconds (minimum time between generated earthquakes)
@@ -286,7 +291,7 @@ class EarthquakeManager:
         }
         self.events.append(data)
         if ADAFRUIT_LOGGING_ENABLED:
-            self.log_earthquake_events(f"{magnitude:.1f} mag {place} plays {format_time(start_time)} (simulated: {simulated})")
+            self.log_earthquake_events(f"{format_time(start_time)} playback of {magnitude:.1f} mag {place} on {format_time(event_time)} (simulated: {simulated})")
 
     def log_earthquake_events(self, data_string):
         import requests
@@ -304,7 +309,7 @@ class EarthquakeManager:
         try:
             response = requests.post(f"https://io.adafruit.com/api/v2/{ADAFRUIT_IO_USERNAME}/feeds/log/data?x-aio-key={ADAFRUIT_IO_KEY}", headers=self.headers, json=data, timeout=10)
             if response.status_code == 200:
-                print("Logged earthquake event to Adafruit IO")
+                print("    Logged earthquake event to Adafruit IO")
             else:
                 print(f"Failed to log earthquake event to Adafruit IO: {response.status_code} - {response.text}")
         except Exception as e:
@@ -317,7 +322,11 @@ class EarthquakeManager:
     def _remove_expired_events(self):
         current_time = time.time()
         self.events = [e for e in self.events if e['start_time'] + e['duration_ms'] > current_time * 1000]  # convert current time to milliseconds
-    
+
+    def _adjust(self, x, k=FACTOR_K, center=FACTOR_CENTER):
+        # return x
+        return x - k * (x - center) * abs(x - center)
+
     def get_earthquake_factor(self):
         self._remove_expired_events()
         current_time = time.time()
@@ -334,7 +343,7 @@ class EarthquakeManager:
                 elapsed = ( current_time * 1000 ) - start_time
                 remaining = duration_ms - elapsed
                 percent_remaining = remaining / duration_ms if duration_ms > 0 else 0
-                factor = event['magnitude'] * percent_remaining
+                factor = self._adjust(event['magnitude'] * percent_remaining)
                 max_factor = max(max_factor, factor)
         return max_factor * FACTOR_MULTIPLIER  # multiplier to increase overall effect
 
@@ -409,7 +418,11 @@ async def main():
                         now_ts = int(time.time())
                         if event_id != "N/A" and event_id in quake_ids:
                             quake_ids[event_id] = now_ts
-                            print(f"  Event ID {event_id} already recorded, updating timestamp")
+                            print(f"    Event ID {event_id} already recorded, updating timestamp")
+                            _trim_quake_ids()
+                        elif event_id != "N/A" and original_time < ( now_ts - (MAX_LOOKBACK) ) * 1000:  # older than max lookback
+                            quake_ids[event_id] = now_ts
+                            print(f"    Event ID {event_id} is older than max lookback, skipping")
                             _trim_quake_ids()
                         else:
                             if event_id != "N/A":
@@ -441,7 +454,7 @@ async def main():
                 print("Current earthquake events being tracked:")
                 for event in earthquake_manager.events:
                     source = "[SIMULATED]" if event['simulated'] else "[REAL]"
-                    print(f"  {source} Magnitude {event['magnitude']} earthquake from {event['event_time']} replaying at {format_time(event['start_time'])} with duration {event['duration_ms'] / 1000:.1f} seconds")  
+                    print(f"  {source} Magnitude {event['magnitude']} earthquake from {format_time(event['event_time'])} replaying at {format_time(event['start_time'])} with duration {event['duration_ms'] / 1000:.1f} seconds")  
         await watchdog_sleep(2000) # sleep between fetches
 
 # Create an Event Loop
