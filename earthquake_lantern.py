@@ -18,8 +18,8 @@ except ImportError:
     import json
 from nature_api import Client
 
-version = "1.0.7"
-print("Earthquake Lantern WiFi - Version:", version)
+version = "1.0.8"
+print("Earthquake Lantern - Version:", version)
 
 time.sleep(2) # allow usb connection on startup
 
@@ -50,22 +50,23 @@ green_pin_2 = 9
 blue_pin_2 = 10
 LED = Pin("LED", Pin.OUT)      # digital output for status LED
 
+# Overall Configuration
 SIMULATE_EARTHQUAKES = False # set to False to disable simulated earthquakes
 LOGGING_ENABLED = False # set to True to enable CSV logging of earthquakes
 ADAFRUIT_LOGGING_ENABLED = True # set to True to enable Adafruit IO logging of earthquakes
 FETCH_INTERVAL = 5 * 60 * 1000 # milliseconds between earthquake data fetches
-FACTOR_MULTIPLIER = 4.5 # multiplier to increase overall effect of earthquake factor on brightness
 MAX_LOOKBACK = 24 * 60 * 60 # seconds to look back for earthquakes (24 hours)
 
-FACTOR_K = 0.02 # how strongly the wind factor is pulled towards the center value
-# A gentle breeze should have the most effect, and higher winds should have less effect to prevent the lantern from flickering too wildly in strong winds. 
-FACTOR_CENTER = 10 # increase wind effect below this speed, decrease effect above this speed.
+# Earthquake Factor Configuration
+FACTOR_MULTIPLIER = 4.5 # multiplier to increase overall effect of earthquake factor on brightness
+FACTOR_K = 0.02 # how strongly the factor is pulled towards the center value
+FACTOR_CENTER = 10 # increase effect below this value, decrease effect above this value.
 
 # Earthquake Generator Configuration
-EQ_GEN_MIN_INTERVAL = 3000  # milliseconds (minimum time between generated earthquakes)
-EQ_GEN_MAX_INTERVAL = 15000  # milliseconds (maximum time between generated earthquakes)
-EQ_GEN_MIN_MAGNITUDE = 0.75 # minimum magnitude for generated earthquakes
-EQ_GEN_MAX_MAGNITUDE = 2.0  # maximum magnitude for generated earthquakes
+EQ_GEN_MIN_INTERVAL = 5 * 1000  # milliseconds (minimum time between generated earthquakes)
+EQ_GEN_MAX_INTERVAL = 20 * 1000  # milliseconds (maximum time between generated earthquakes)
+EQ_GEN_MIN_MAGNITUDE = 0.5 # minimum magnitude for generated earthquakes
+EQ_GEN_MAX_MAGNITUDE = 1.5  # maximum magnitude for generated earthquakes
 EQ_GEN_FUTURE_SECONDS = 5  # seconds in the future when generated earthquake occurs
 
 terminateThread = False
@@ -242,7 +243,7 @@ def check_demo_button():
         print("Demo button pressed - generating simulated earthquake")
         magnitude = random.uniform(5, 6) # generate a strong earthquake for demo
         event_time = int((time.time() - (FETCH_INTERVAL // 1000) + EQ_GEN_FUTURE_SECONDS) * 1000)
-        earthquake_manager.set_earthquake_data(event_time, place="Demo Button", magnitude=magnitude, simulated=True)
+        earthquake_manager.set_earthquake_data(event_time, place="<demo button>", magnitude=magnitude, simulated=True)
         print(f"Generated simulated earthquake: Magnitude {magnitude:.2f} will play at {format_time(event_time + FETCH_INTERVAL)}")
         last_button_press = time.time()
 
@@ -366,7 +367,7 @@ async def earthquake_generator():
             event_time = int((time.time() - (FETCH_INTERVAL // 1000) + EQ_GEN_FUTURE_SECONDS) * 1000)
             
             # Add the simulated earthquake
-            earthquake_manager.set_earthquake_data(event_time, place="Simulated Location", magnitude=magnitude, simulated=True)
+            earthquake_manager.set_earthquake_data(event_time, place="<simulated>", magnitude=magnitude, simulated=True)
             print(f"Generated simulated earthquake: Magnitude {magnitude:.2f} will play at {format_time(event_time + FETCH_INTERVAL)}")
             
         except Exception as e:
