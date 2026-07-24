@@ -19,7 +19,7 @@ except ImportError:
     import json
 from nature_api import Client
 
-version = "1.0.9"
+version = "1.0.10"
 print("Earthquake Lantern - Version:", version)
 
 time.sleep(2) # allow usb connection on startup
@@ -43,6 +43,7 @@ if ipgeolocation_key:
 
 
 demo_button = Pin(2, Pin.IN, Pin.PULL_UP)
+buzzer = Pin(14, Pin.OUT)
 
 red_pin = 5
 green_pin = 6
@@ -55,6 +56,7 @@ LED = Pin("LED", Pin.OUT)      # digital output for status LED
 
 # Overall Configuration
 SIMULATE_EARTHQUAKES = False # set to False to disable simulated earthquakes
+USE_BUZZER = True # set to True to enable buzzer for earthquake events
 LOGGING_ENABLED = False # set to True to enable CSV logging of earthquakes
 ADAFRUIT_LOGGING_ENABLED = True # set to True to enable Adafruit IO logging of earthquakes
 FETCH_INTERVAL = 5 * 60 * 1000 # milliseconds between earthquake data fetches
@@ -332,19 +334,22 @@ class EarthquakeManager:
             print(f"Error logging earthquake event to Adafruit IO: {e}")
     
     def _calculate_duration(self, magnitude):
-        # Duration in milliseconds: magnitude * 3
-        return int(magnitude * 3 * 1000)  # convert to milliseconds
+        # Duration in milliseconds
+        duration = magnitude * 4  # base duration in seconds
+        print(f"* Calculated base duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
+        duration = self._adjust(duration, k=0.02, center=30)  # adjust duration based on magnitude
+        print(f"* Adjusted duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
+        return int(duration * 1000)  # convert to milliseconds
     
     def _remove_expired_events(self):
         current_time = time.time()
         self.events = [e for e in self.events if e['start_time'] + e['duration_ms'] > current_time * 1000]  # convert current time to milliseconds
 
     def _adjust(self, x, k=FACTOR_K, center=FACTOR_CENTER):
-        # return x
         return x - k * (x - center) * abs(x - center)
 
     def get_earthquake_factor(self):
-        self._remove_expired_events()
+        self._remove_expired_events() # remove expired events from the list
         current_time = time.time()
         max_factor = 0
         
@@ -352,7 +357,7 @@ class EarthquakeManager:
             start_time = event['start_time']
             duration_ms = event['duration_ms']
             end_time = start_time + duration_ms
-            
+
             # Check if event is active (within start and end time)
             if start_time <= ( current_time * 1000 ) <= end_time:
                 # print("event is active ")
@@ -388,6 +393,23 @@ async def earthquake_generator():
         except Exception as e:
             print(f"Error in earthquake generator: {e}")
 
+
+async def buzzer_control():
+    # buzz once at each new earthquake event's start_time
+    while True:
+        try:
+            current_time = time.time()  # current time in seconds
+            for event in earthquake_manager.events:
+                if (event['start_time'] // 1000) == current_time:  # buzz at start_time
+                    # print(f"Buzzing for earthquake event: Magnitude {event['magnitude']:.2f} at {format_time(event['start_time'])}")
+                    buzzer.value(1)  # turn on buzzer
+                    await asyncio.sleep_ms(200)  # buzz for this duration
+                    buzzer.value(0)  # turn off buzzer
+                    await asyncio.sleep_ms(800)  # wait to complete the 1 second window
+        except Exception as e:
+            print(f"Error in buzzer control: {e}")
+        await asyncio.sleep_ms(100)  # check every 100 ms
+            
 async def main():
     wdt.feed()
     connection = connect_to_wifi()
@@ -436,15 +458,12 @@ async def main():
                         if event_id != "N/A" and event_id in quake_ids:
                             quake_ids[event_id] = now_ts
                             print(f"    Event ID {event_id} already recorded, updating timestamp")
-                            _trim_quake_ids()
                         elif event_id != "N/A" and original_time < ( now_ts - (MAX_LOOKBACK) ) * 1000:  # older than max lookback
                             quake_ids[event_id] = now_ts
                             print(f"    Event ID {event_id} is older than max lookback, skipping")
-                            _trim_quake_ids()
                         else:
                             if event_id != "N/A":
                                 quake_ids[event_id] = now_ts
-                                _trim_quake_ids()
                             if LOGGING_ENABLED:
                                 try:
                                     log_earthquake_to_csv(event_id, place, magnitude, original_time, event_time)
@@ -453,6 +472,7 @@ async def main():
                             earthquake_manager.set_earthquake_data(event_time, place, magnitude, simulated=False)
                 else:
                     print('  No new earthquake data available')
+                _trim_quake_ids()
             except Exception as e:
                 print('Error fetching earthquake data:', e)
 
@@ -481,11 +501,10 @@ loop = asyncio.get_event_loop()
 loop.create_task(main())
 if SIMULATE_EARTHQUAKES:
     # Create a task to run the earthquake generator
-    loop.create_task(earthquake_generator())   
+    loop.create_task(earthquake_generator())
+if USE_BUZZER:
+    loop.create_task(buzzer_control())
 _thread.start_new_thread(light_candle, ())
-
-# print("Injecting initial earthquake data for testing...")
-# earthquake_manager.set_earthquake_data(((time.time() * 1000) - (FETCH_INTERVAL - 20000)), 9.0, simulated=True)  # start 60 seconds after launch
 
 try:
     # Run the event loop indefinitely
