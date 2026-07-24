@@ -12,13 +12,14 @@ import random
 import _thread
 import secrets
 import gc
+import micropython
 try:
     import ujson as json
 except ImportError:
     import json
 from nature_api import Client
 
-version = "1.0.8"
+version = "1.0.9"
 print("Earthquake Lantern - Version:", version)
 
 time.sleep(2) # allow usb connection on startup
@@ -28,6 +29,8 @@ ssid = secrets.WIFI_SSID  # your SSID name
 password = secrets.WIFI_PASSWORD  # your WiFi password
 
 wdt = WDT(timeout=8388)  # 8-second watchdog timer
+
+gc.threshold(2048) # set garbage collection threshold to 2KB
 
 nature_client = Client(ssid, password, debug_mode=False, watchdog=wdt)
 
@@ -56,6 +59,8 @@ LOGGING_ENABLED = False # set to True to enable CSV logging of earthquakes
 ADAFRUIT_LOGGING_ENABLED = True # set to True to enable Adafruit IO logging of earthquakes
 FETCH_INTERVAL = 5 * 60 * 1000 # milliseconds between earthquake data fetches
 MAX_LOOKBACK = 24 * 60 * 60 # seconds to look back for earthquakes (24 hours)
+MAX_LOOKUP_FAILS = 5 # maximum number of consecutive failed lookups before giving up
+lookup_fail_count = 0 # count consecutive exception failures while fetching earthquake data
 
 # Earthquake Factor Configuration
 FACTOR_MULTIPLIER = 4.5 # multiplier to increase overall effect of earthquake factor on brightness
@@ -118,17 +123,20 @@ def format_time(timestamp):
     
 # CSV logging for earthquakes
 CSV_FILE = 'earthquakes.csv'
-MAX_CSV_RECORDS = 10000
+MAX_CSV_RECORDS = 1000  # maximum number of earthquake records to keep in CSV
 
 # Earthquake ID tracking and persistence
 quake_ids = {}
 QUAKE_ID_FILE = 'quake_ids.json'
-MAX_QUAKE_IDS = 10000
+MAX_QUAKE_IDS = 1000
 QUAKE_ID_SAVE_INTERVAL = 3600  # seconds between backup saves
 last_quake_id_save = 0
 
 def _trim_quake_ids():
     global quake_ids
+    # Remove all quake IDs that are older than MAX_LOOKBACK seconds
+    now_ts = int(time.time())
+    quake_ids = {k: v for k, v in quake_ids.items() if v >= now_ts - MAX_LOOKBACK}
     if len(quake_ids) <= MAX_QUAKE_IDS:
         return
     # keep the most recently updated event IDs by timestamp
@@ -198,6 +206,7 @@ def log_earthquake_to_csv(event_id, place, magnitude, original_time, event_time)
         print('Failed to log earthquake to CSV:', e)
 
 def fetch_earthquake_data(seconds=300):
+    global lookup_fail_count
     try:
         # --- EARTHQUAKES BY DATE RANGE ---
         # print(f"Earthquakes in the past {seconds} seconds (all magnitudes):")
@@ -217,10 +226,16 @@ def fetch_earthquake_data(seconds=300):
         wdt.feed()
         results = nature_client.get_earthquakes(eq_params)
         features = results.get("features", [])
+        lookup_fail_count = 0
         # print(f"  Found: {len(features)} earthquakes in past {seconds // 60} minutes")
         return features
     except Exception as e:
+        lookup_fail_count += 1
         print('Error fetching earthquake data:', e)
+        print(f"Earthquake lookup failures: {lookup_fail_count}/{MAX_LOOKUP_FAILS}")
+        if lookup_fail_count > MAX_LOOKUP_FAILS:
+            print(f"Exceeded MAX_LOOKUP_FAILS ({MAX_LOOKUP_FAILS}). Resetting system.")
+            reset()
         return None
 
 async def watchdog_sleep(milliseconds):
@@ -400,6 +415,7 @@ async def main():
                 next_sync = time.time() + 600 # try again in 10 minutes
                 print("Failed to update NTP, retrying in 10 minutes.", e)
         if (time.time() >= next_fetch):
+            micropython.mem_info()
             try:
                 # Fetch and display earthquake data using nature_api
                 next_fetch = time.time() + (FETCH_INTERVAL // 1000) # schedule next fetch
