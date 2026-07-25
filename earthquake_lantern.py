@@ -19,7 +19,7 @@ except ImportError:
     import json
 from nature_api import Client
 
-version = "1.0.10"
+version = "1.0.11"
 print("Earthquake Lantern - Version:", version)
 
 time.sleep(2) # allow usb connection on startup
@@ -336,9 +336,9 @@ class EarthquakeManager:
     def _calculate_duration(self, magnitude):
         # Duration in milliseconds
         duration = magnitude * 4  # base duration in seconds
-        print(f"* Calculated base duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
+        # print(f"* Calculated base duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
         duration = self._adjust(duration, k=0.02, center=30)  # adjust duration based on magnitude
-        print(f"* Adjusted duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
+        # print(f"* Adjusted duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
         return int(duration * 1000)  # convert to milliseconds
     
     def _remove_expired_events(self):
@@ -397,15 +397,22 @@ async def earthquake_generator():
 async def buzzer_control():
     # buzz once at each new earthquake event's start_time
     while True:
+        # Only buzz during the daytime hours (7 AM to 11 PM UTC-4:00)
+        current_hour = (time.gmtime()[3] - 4) % 24  # get current hour in UTC-4:00
+        if current_hour < 7 or current_hour > 23:
+            await asyncio.sleep_ms(1000)  # sleep for 1 second and check again
+            continue
         try:
             current_time = time.time()  # current time in seconds
             for event in earthquake_manager.events:
-                if (event['start_time'] // 1000) == current_time:  # buzz at start_time
-                    # print(f"Buzzing for earthquake event: Magnitude {event['magnitude']:.2f} at {format_time(event['start_time'])}")
-                    buzzer.value(1)  # turn on buzzer
-                    await asyncio.sleep_ms(200)  # buzz for this duration
-                    buzzer.value(0)  # turn off buzzer
-                    await asyncio.sleep_ms(800)  # wait to complete the 1 second window
+                if (event['start_time'] // 1000) == current_time + 1:  # buzz one seconds before the event starts
+                    beep_time = 50  # milliseconds
+                    for _ in range(1):  # buzz 4 times
+                        buzzer.value(1)  # turn on buzzer
+                        await asyncio.sleep_ms(beep_time)  # buzz for this duration
+                        buzzer.value(0)  # turn off buzzer
+                        await asyncio.sleep_ms(beep_time)  # wait between buzzes
+                    await asyncio.sleep_ms(900)  # wait the remainder of one second
         except Exception as e:
             print(f"Error in buzzer control: {e}")
         await asyncio.sleep_ms(100)  # check every 100 ms
