@@ -13,27 +13,27 @@
   },
   {
     "mag": 2,
-    "duration_ms": 80
-  },
-  {
-    "mag": 2.5,
     "duration_ms": 100
   },
   {
-    "mag": 3,
+    "mag": 2.5,
     "duration_ms": 200
   },
   {
-    "mag": 3.5,
-    "duration_ms": 400
+    "mag": 3,
+    "duration_ms": 300
   },
   {
-    "mag": 4,
+    "mag": 3.5,
     "duration_ms": 500
   },
   {
-    "mag": 4.5,
+    "mag": 4,
     "duration_ms": 700
+  },
+  {
+    "mag": 4.5,
+    "duration_ms": 850
   },
   {
     "mag": 5,

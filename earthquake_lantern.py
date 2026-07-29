@@ -337,11 +337,14 @@ class EarthquakeManager:
     
     def _calculate_duration(self, magnitude):
         # Duration in milliseconds
-        duration = magnitude * 4  # base duration in seconds
-        # print(f"* Calculated base duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
-        duration = self._adjust(duration, k=0.02, center=30)  # adjust duration based on magnitude
-        # print(f"* Adjusted duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
+        duration = (magnitude * 2) + (magnitude ** 2)
+        print(f"* Adjusted duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
         return int(duration * 1000)  # convert to milliseconds
+        # duration = magnitude * 4  # base duration in seconds
+        # print(f"* Calculated base duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
+        # duration = self._adjust(duration, k=0.02, center=30)  # adjust duration based on magnitude
+        # print(f"* Adjusted duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
+
     
     def _remove_expired_events(self):
         current_time = time.time()
