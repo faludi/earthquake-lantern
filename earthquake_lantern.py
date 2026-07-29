@@ -19,7 +19,7 @@ except ImportError:
     import json
 from nature_api import Client
 
-version = "1.0.11"
+version = "1.0.13"
 print("Earthquake Lantern - Version:", version)
 
 time.sleep(2) # allow usb connection on startup
@@ -57,6 +57,8 @@ LED = Pin("LED", Pin.OUT)      # digital output for status LED
 # Overall Configuration
 SIMULATE_EARTHQUAKES = False # set to False to disable simulated earthquakes
 USE_BUZZER = True # set to True to enable buzzer for earthquake events
+TIME_ZONE = -5 # base UTC offset in hours (US Eastern Standard Time)
+USA_DAYLIGHT_SAVINGS = True # set to True to apply US daylight savings rules
 LOGGING_ENABLED = False # set to True to enable CSV logging of earthquakes
 ADAFRUIT_LOGGING_ENABLED = True # set to True to enable Adafruit IO logging of earthquakes
 FETCH_INTERVAL = 5 * 60 * 1000 # milliseconds between earthquake data fetches
@@ -394,25 +396,77 @@ async def earthquake_generator():
             print(f"Error in earthquake generator: {e}")
 
 
+def _is_usa_daylight_savings(now_utc):
+    """Return True when US daylight savings time is active.
+
+    Uses US DST boundaries in UTC and does not depend on local UTC offset:
+    - starts second Sunday in March at 07:00 UTC
+    - ends first Sunday in November at 06:00 UTC
+    """
+    month = now_utc[1]
+    day = now_utc[2]
+    hour = now_utc[3]
+    weekday = now_utc[6]  # Monday=0 .. Sunday=6
+
+    if month < 3 or month > 11:
+        return False
+    if 3 < month < 11:
+        return True
+
+    # Derive month Sundays from today's weekday/day without extra libraries.
+    first_weekday = (weekday - ((day - 1) % 7)) % 7
+    first_sunday = 1 + ((6 - first_weekday) % 7)
+
+    if month == 3:
+        second_sunday = first_sunday + 7
+        if day > second_sunday:
+            return True
+        if day < second_sunday:
+            return False
+        return hour >= 7
+
+    # month == 11
+    if day < first_sunday:
+        return True
+    if day > first_sunday:
+        return False
+    return hour < 6
+
+
 async def buzzer_control():
     # buzz once at each new earthquake event's start_time
     while True:
-        # Only buzz during the daytime hours (7 AM to 11 PM UTC-4:00)
-        current_hour = (time.gmtime()[3] - 4) % 24  # get current hour in UTC-4:00
-        if current_hour < 7 or current_hour > 23:
+        # Only buzz during daytime hours (7 AM to 10 PM local time),
+        # with optional US daylight savings adjustment.
+        now_utc = time.gmtime()
+        dst_adjust = 1 if (USA_DAYLIGHT_SAVINGS and _is_usa_daylight_savings(now_utc)) else 0
+        utc_offset = TIME_ZONE + dst_adjust
+        current_hour = (now_utc[3] + utc_offset) % 24
+        if current_hour < 7 or current_hour > 22:
             await asyncio.sleep_ms(1000)  # sleep for 1 second and check again
             continue
         try:
             current_time = time.time()  # current time in seconds
             for event in earthquake_manager.events:
                 if (event['start_time'] // 1000) == current_time + 1:  # buzz one seconds before the event starts
-                    beep_time = 50  # milliseconds
-                    for _ in range(1):  # buzz 4 times
-                        buzzer.value(1)  # turn on buzzer
-                        await asyncio.sleep_ms(beep_time)  # buzz for this duration
-                        buzzer.value(0)  # turn off buzzer
-                        await asyncio.sleep_ms(beep_time)  # wait between buzzes
-                    await asyncio.sleep_ms(900)  # wait the remainder of one second
+                    # scale beep using buzzer_timings.json configuration file
+                    magnitude = event['magnitude']
+                    beep_time = 20  # default duration
+                    try:
+                        with open('buzzer_timings.json', 'r') as f:
+                            buzzer_timings = json.loads(f.read())
+                        for timing in buzzer_timings:
+                            if magnitude >= timing['mag']:
+                                beep_time = timing['duration_ms']
+                    except Exception as e:
+                        print(f"Error reading buzzer timings: {e}")
+
+                    print(f"Buzzing for earthquake event, duration {beep_time} ms for magnitude {magnitude:.2f}")
+                    buzzer.value(1)  # turn on buzzer
+                    await asyncio.sleep_ms(beep_time)  # buzz for this duration
+                    buzzer.value(0)  # turn off buzzer
+                    await asyncio.sleep_ms(beep_time)  # wait between buzzes
+                    await asyncio.sleep_ms(max(0, 1000 - (beep_time * 2)))  # wait the remainder of one second
         except Exception as e:
             print(f"Error in buzzer control: {e}")
         await asyncio.sleep_ms(100)  # check every 100 ms
@@ -526,4 +580,4 @@ except KeyboardInterrupt:
     save_quake_ids()
     print('Program Interrupted by the user')
     terminateThread = True
-
+    
