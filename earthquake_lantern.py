@@ -19,7 +19,7 @@ except ImportError:
     import json
 from nature_api import Client
 
-version = "1.0.13"
+version = "1.0.14"
 print("Earthquake Lantern - Version:", version)
 
 time.sleep(2) # allow usb connection on startup
@@ -469,7 +469,7 @@ async def buzzer_control():
                     await asyncio.sleep_ms(beep_time)  # buzz for this duration
                     buzzer.value(0)  # turn off buzzer
                     await asyncio.sleep_ms(beep_time)  # wait between buzzes
-                    await asyncio.sleep_ms(max(0, 1000 - (beep_time * 2)))  # wait the remainder of one second
+                    await asyncio.sleep_ms(max(0, 1100 - (beep_time * 2)))  # wait a little longer than the remainder of one second
         except Exception as e:
             print(f"Error in buzzer control: {e}")
         await asyncio.sleep_ms(100)  # check every 100 ms
@@ -482,7 +482,8 @@ async def main():
         reset()
 
     if not nature_client.sync_time():
-        print('NTP sync failed, continuing with local time if available.')
+        print('NTP sync failed, exiting.')
+        reset()
 
     next_sync = time.time()
     next_fetch = time.time()
