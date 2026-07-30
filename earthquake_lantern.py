@@ -321,9 +321,10 @@ class EarthquakeManager:
             "X-AIO-Key": ADAFRUIT_IO_KEY,
             "Content-Type": "application/json"
         }
-        data = {
+        data = json.dumps({
             "value": data_string
-        }
+        })
+        
         # Log earthquake events to Adafruit IO
         wdt.feed()
         try:
