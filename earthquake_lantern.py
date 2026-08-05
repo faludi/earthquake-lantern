@@ -19,7 +19,7 @@ except ImportError:
     import json
 from nature_api import Client
 
-version = "1.0.14"
+version = "1.0.20"
 print("Earthquake Lantern - Version:", version)
 
 time.sleep(2) # allow usb connection on startup
@@ -292,11 +292,78 @@ def light_candle():
         green_light()
         time.sleep_ms(1)
 
+def replace_accents(input_string):
+    """Replace accented characters with their unaccented equivalents."""
+    accents = {
+        # Common Latin diacritics and ligatures used in place names.
+        'á': 'a', 'à': 'a', 'ä': 'a', 'â': 'a', 'ã': 'a', 'å': 'a', 'ā': 'a', 'ă': 'a', 'ą': 'a',
+        'Á': 'A', 'À': 'A', 'Ä': 'A', 'Â': 'A', 'Ã': 'A', 'Å': 'A', 'Ā': 'A', 'Ă': 'A', 'Ą': 'A',
+
+        'é': 'e', 'è': 'e', 'ë': 'e', 'ê': 'e', 'ē': 'e', 'ĕ': 'e', 'ė': 'e', 'ę': 'e', 'ě': 'e',
+        'É': 'E', 'È': 'E', 'Ë': 'E', 'Ê': 'E', 'Ē': 'E', 'Ĕ': 'E', 'Ė': 'E', 'Ę': 'E', 'Ě': 'E',
+
+        'í': 'i', 'ì': 'i', 'ï': 'i', 'î': 'i', 'ĩ': 'i', 'ī': 'i', 'ĭ': 'i', 'į': 'i', 'ı': 'i',
+        'Í': 'I', 'Ì': 'I', 'Ï': 'I', 'Î': 'I', 'Ĩ': 'I', 'Ī': 'I', 'Ĭ': 'I', 'Į': 'I', 'İ': 'I',
+
+        'ó': 'o', 'ò': 'o', 'ö': 'o', 'ô': 'o', 'õ': 'o', 'ø': 'o', 'ō': 'o', 'ŏ': 'o', 'ő': 'o',
+        'Ó': 'O', 'Ò': 'O', 'Ö': 'O', 'Ô': 'O', 'Õ': 'O', 'Ø': 'O', 'Ō': 'O', 'Ŏ': 'O', 'Ő': 'O',
+
+        'ú': 'u', 'ù': 'u', 'ü': 'u', 'û': 'u', 'ũ': 'u', 'ū': 'u', 'ŭ': 'u', 'ů': 'u', 'ű': 'u', 'ų': 'u',
+        'Ú': 'U', 'Ù': 'U', 'Ü': 'U', 'Û': 'U', 'Ũ': 'U', 'Ū': 'U', 'Ŭ': 'U', 'Ů': 'U', 'Ű': 'U', 'Ų': 'U',
+
+        'ý': 'y', 'ÿ': 'y', 'ŷ': 'y',
+        'Ý': 'Y', 'Ÿ': 'Y', 'Ŷ': 'Y',
+
+        'ñ': 'n', 'ń': 'n', 'ň': 'n', 'ņ': 'n',
+        'Ñ': 'N', 'Ń': 'N', 'Ň': 'N', 'Ņ': 'N',
+
+        'ç': 'c', 'ć': 'c', 'č': 'c', 'ĉ': 'c', 'ċ': 'c',
+        'Ç': 'C', 'Ć': 'C', 'Č': 'C', 'Ĉ': 'C', 'Ċ': 'C',
+
+        'ś': 's', 'š': 's', 'ş': 's', 'ș': 's', 'ŝ': 's',
+        'Ś': 'S', 'Š': 'S', 'Ş': 'S', 'Ș': 'S', 'Ŝ': 'S',
+
+        'ž': 'z', 'ź': 'z', 'ż': 'z',
+        'Ž': 'Z', 'Ź': 'Z', 'Ż': 'Z',
+
+        'ł': 'l', 'ľ': 'l', 'ĺ': 'l', 'ļ': 'l',
+        'Ł': 'L', 'Ľ': 'L', 'Ĺ': 'L', 'Ļ': 'L',
+
+        'ř': 'r', 'ŕ': 'r', 'ŗ': 'r',
+        'Ř': 'R', 'Ŕ': 'R', 'Ŗ': 'R',
+
+        'ť': 't', 'ţ': 't', 'ț': 't',
+        'Ť': 'T', 'Ţ': 'T', 'Ț': 'T',
+
+        'ď': 'd', 'đ': 'd', 'ð': 'd',
+        'Ď': 'D', 'Đ': 'D', 'Ð': 'D',
+
+        'ğ': 'g', 'ģ': 'g', 'ġ': 'g', 'ĝ': 'g',
+        'Ğ': 'G', 'Ģ': 'G', 'Ġ': 'G', 'Ĝ': 'G',
+
+        'ħ': 'h', 'ĥ': 'h',
+        'Ħ': 'H', 'Ĥ': 'H',
+
+        'ĵ': 'j',
+        'Ĵ': 'J',
+
+        'ķ': 'k',
+        'Ķ': 'K',
+
+        'þ': 'th', 'Þ': 'Th',
+        'ß': 'ss',
+        'æ': 'ae', 'Æ': 'Ae',
+        'œ': 'oe', 'Œ': 'Oe',
+    }
+    for accented_char, unaccented_char in accents.items():
+        input_string = input_string.replace(accented_char, unaccented_char)
+    return input_string
+
 class EarthquakeManager:
     def __init__(self):
         self.events = []
     
-    def set_earthquake_data(self, event_time, place,magnitude, simulated=False):
+    def set_earthquake_data(self, event_time, place, magnitude, simulated=False):
         # event_time is in milliseconds (from USGS API)
         # Convert to seconds and add FETCH_INTERVAL to get start_time
         start_time = event_time + (FETCH_INTERVAL)
@@ -307,7 +374,8 @@ class EarthquakeManager:
             'event_time': event_time,
             'start_time': start_time,
             'duration_ms': duration_ms,
-            'simulated': simulated
+            'simulated': simulated,
+            'announced': False  # flag to indicate if the event has been announced
         }
         self.events.append(data)
         if ADAFRUIT_LOGGING_ENABLED:
@@ -319,12 +387,14 @@ class EarthquakeManager:
         ADAFRUIT_IO_USERNAME = secrets.ADAFRUIT_IO_USERNAME
         self.headers = {
             "X-AIO-Key": ADAFRUIT_IO_KEY,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "charset": "utf-8"
         }
-        data = json.dumps({
-            "value": data_string
-        })
-        
+
+        data = {
+            "value": json.dumps(data_string).strip('"')
+        }
+
         # Log earthquake events to Adafruit IO
         wdt.feed()
         try:
@@ -333,13 +403,29 @@ class EarthquakeManager:
                 print("    Logged earthquake event to Adafruit IO")
             else:
                 print(f"Failed to log earthquake event to Adafruit IO: {response.status_code} - {response.text}")
+                print (f"    Data sent: {data}")
+                for _ in range(5):
+                    buzzer.value(1)  # turn on buzzer to indicate error
+                    time.sleep(0.25)
+                    buzzer.value(0)  # turn off buzzer
+                    time.sleep(0.25)
+                    with open('adafruit_log_error.txt', 'a') as f:
+                        f.write(f"{time.time()}: Failed to log earthquake event to Adafruit IO: {response.status_code} - {response.text}\n {data}\n")
         except Exception as e:
             print(f"Error logging earthquake event to Adafruit IO: {e}")
-    
+            print (f"    Data sent: {data}")
+            for _ in range(5):
+                buzzer.value(1)  # turn on buzzer to indicate error
+                time.sleep(0.25)
+                buzzer.value(0)  # turn off buzzer
+                time.sleep(0.25)
+                with open('adafruit_log_error.txt', 'a') as f:
+                    f.write(f"{time.time()}: Error logging earthquake event to Adafruit IO: {e}\n {data}\n")
+
     def _calculate_duration(self, magnitude):
         # Duration in milliseconds
         duration = (magnitude * 2) + (magnitude ** 2)
-        print(f"* Adjusted duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
+        # print(f"* Adjusted duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
         return int(duration * 1000)  # convert to milliseconds
         # duration = magnitude * 4  # base duration in seconds
         # print(f"* Calculated base duration for magnitude {magnitude:.2f}: {duration:.1f} seconds")
@@ -452,7 +538,7 @@ async def buzzer_control():
         try:
             current_time = time.time()  # current time in seconds
             for event in earthquake_manager.events:
-                if (event['start_time'] // 1000) == current_time + 1:  # buzz one seconds before the event starts
+                if ((event['start_time'] // 1000) < current_time + 1) and (not event['announced']):  # buzz one seconds before the event starts
                     # scale beep using buzzer_timings.json configuration file
                     magnitude = event['magnitude']
                     beep_time = 20  # default duration
@@ -466,9 +552,12 @@ async def buzzer_control():
                         print(f"Error reading buzzer timings: {e}")
 
                     print(f"Buzzing for earthquake event, duration {beep_time} ms for magnitude {magnitude:.2f}")
+                    wdt.feed()
                     buzzer.value(1)  # turn on buzzer
                     await asyncio.sleep_ms(beep_time)  # buzz for this duration
+                    wdt.feed()
                     buzzer.value(0)  # turn off buzzer
+                    event['announced'] = True  # mark the event as announced
                     await asyncio.sleep_ms(beep_time)  # wait between buzzes
                     await asyncio.sleep_ms(max(0, 1100 - (beep_time * 2)))  # wait a little longer than the remainder of one second
         except Exception as e:
@@ -514,7 +603,7 @@ async def main():
                     for eq in earthquakes:
                         properties = eq.get("properties", {})
                         magnitude = properties.get("mag", "N/A")
-                        place = properties.get("place", "N/A")
+                        place = replace_accents(properties.get("place", "N/A"))
                         original_time = properties.get("time", 0)
                         event_id = eq.get("id", "N/A")
                         event_time = properties.get("updated", 0)
