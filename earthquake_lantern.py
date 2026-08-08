@@ -19,10 +19,13 @@ except ImportError:
     import json
 from nature_api import Client
 
+
 version = "1.0.20"
 print("Earthquake Lantern - Version:", version)
 
 time.sleep(2) # allow usb connection on startup
+
+USE_DFPLAYER = False  # set to True to enable DFPlayer for earthquake sound effects
 
 # Wi-Fi credentials
 ssid = secrets.WIFI_SSID  # your SSID name
@@ -53,6 +56,15 @@ red_pin_2 = 8
 green_pin_2 = 9
 blue_pin_2 = 10
 LED = Pin("LED", Pin.OUT)      # digital output for status LED
+
+if USE_DFPLAYER:
+    from picodfplayer import DFPlayer
+    # Constants. Change these if DFPlayer is connected to other pins.
+    UART_INSTANCE=0
+    TX_PIN = 16
+    RX_PIN=17
+    BUSY_PIN=18
+    player=DFPlayer(UART_INSTANCE, TX_PIN, RX_PIN, BUSY_PIN)
 
 # Overall Configuration
 SIMULATE_EARTHQUAKES = False # set to False to disable simulated earthquakes
@@ -404,23 +416,13 @@ class EarthquakeManager:
             else:
                 print(f"Failed to log earthquake event to Adafruit IO: {response.status_code} - {response.text}")
                 print (f"    Data sent: {data}")
-                for _ in range(5):
-                    buzzer.value(1)  # turn on buzzer to indicate error
-                    time.sleep(0.25)
-                    buzzer.value(0)  # turn off buzzer
-                    time.sleep(0.25)
-                    with open('adafruit_log_error.txt', 'a') as f:
-                        f.write(f"{time.time()}: Failed to log earthquake event to Adafruit IO: {response.status_code} - {response.text}\n {data}\n")
+                with open('adafruit_log_error.txt', 'a') as f:
+                    f.write(f"{time.time()}: Failed to log earthquake event to Adafruit IO: {response.status_code} - {response.text}\n {data}\n")
         except Exception as e:
             print(f"Error logging earthquake event to Adafruit IO: {e}")
             print (f"    Data sent: {data}")
-            for _ in range(5):
-                buzzer.value(1)  # turn on buzzer to indicate error
-                time.sleep(0.25)
-                buzzer.value(0)  # turn off buzzer
-                time.sleep(0.25)
-                with open('adafruit_log_error.txt', 'a') as f:
-                    f.write(f"{time.time()}: Error logging earthquake event to Adafruit IO: {e}\n {data}\n")
+            with open('adafruit_log_error.txt', 'a') as f:
+                f.write(f"{time.time()}: Error logging earthquake event to Adafruit IO: {e}\n {data}\n")
 
     def _calculate_duration(self, magnitude):
         # Duration in milliseconds
